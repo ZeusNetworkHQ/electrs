@@ -2,11 +2,11 @@ use std::str::FromStr;
 
 #[cfg(not(feature = "liquid"))] // use regular Bitcoin data structures
 pub use bitcoin::{
+    address,
+    block::Header as BlockHeader,
     blockdata::{opcodes, script, witness::Witness},
     consensus::deserialize,
-    hashes,
-    util::address,
-    Block, BlockHash, BlockHeader, OutPoint, Script, Transaction, TxIn, TxOut, Txid,
+    hashes, Block, BlockHash, Opcode, OutPoint, Script, Transaction, TxIn, TxOut, Txid,
 };
 
 #[cfg(feature = "liquid")]
@@ -20,7 +20,8 @@ pub use {
 };
 
 use bitcoin::blockdata::constants::genesis_block;
-pub use bitcoin::network::constants::Network as BNetwork;
+use bitcoin::p2p::Magic;
+pub use bitcoin::Network as BNetwork;
 
 #[cfg(not(feature = "liquid"))]
 pub type Value = u64;
@@ -59,15 +60,11 @@ pub const LIQUID_TESTNET_PARAMS: address::AddressParams = address::AddressParams
 
 /// Magic for testnet4, 0x1c163f28 (from BIP94) with flipped endianness.
 #[cfg(not(feature = "liquid"))]
-const TESTNET4_MAGIC: u32 = 0x283f161c;
 
 impl Network {
     #[cfg(not(feature = "liquid"))]
-    pub fn magic(self) -> u32 {
-        match self {
-            Self::Testnet4 => TESTNET4_MAGIC,
-            _ => BNetwork::from(self).magic(),
-        }
+    pub fn magic(self) -> Magic {
+        BNetwork::from(self).magic()
     }
 
     #[cfg(feature = "liquid")]
@@ -234,8 +231,10 @@ impl From<BNetwork> for Network {
         match network {
             BNetwork::Bitcoin => Network::Bitcoin,
             BNetwork::Testnet => Network::Testnet,
+            BNetwork::Testnet4 => Network::Testnet4,
             BNetwork::Regtest => Network::Regtest,
             BNetwork::Signet => Network::Signet,
+            _ => panic!("unknown network"),
         }
     }
 }

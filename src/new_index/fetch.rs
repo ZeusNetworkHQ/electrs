@@ -1,3 +1,4 @@
+use bitcoin::p2p::Magic;
 use rayon::prelude::*;
 
 #[cfg(not(feature = "liquid"))]
@@ -82,7 +83,7 @@ pub fn bitcoind_sequential_fetcher(
                     .zip(entries)
                     .map(|(block, entry)| BlockEntry {
                         entry: entry.clone(), // TODO: remove this clone()
-                        size: block.size() as u32,
+                        size: block.total_size() as u32,
                         block,
                     })
                     .collect();
@@ -138,7 +139,7 @@ fn bitcoind_fetcher(
                     .zip(entries)
                     .map(|(block, entry)| BlockEntry {
                         entry: entry.clone(), // TODO: remove this clone()
-                        size: block.size() as u32,
+                        size: block.total_size() as u32,
                         block,
                     })
                     .collect();
@@ -235,7 +236,7 @@ fn blkfiles_reader(blk_files: Vec<PathBuf>) -> Fetcher<Vec<u8>> {
     )
 }
 
-fn blkfiles_parser(blobs: Fetcher<Vec<u8>>, magic: u32) -> Fetcher<Vec<SizedBlock>> {
+fn blkfiles_parser(blobs: Fetcher<Vec<u8>>, magic: Magic) -> Fetcher<Vec<SizedBlock>> {
     let chan = SyncChannel::new(1);
     let sender = chan.sender();
 
@@ -253,7 +254,7 @@ fn blkfiles_parser(blobs: Fetcher<Vec<u8>>, magic: u32) -> Fetcher<Vec<SizedBloc
     )
 }
 
-fn parse_blocks(blob: Vec<u8>, magic: u32) -> Result<Vec<SizedBlock>> {
+fn parse_blocks(blob: Vec<u8>, magic: Magic) -> Result<Vec<SizedBlock>> {
     let mut cursor = Cursor::new(&blob);
     let mut slices = vec![];
     let max_pos = blob.len() as u64;
@@ -262,7 +263,7 @@ fn parse_blocks(blob: Vec<u8>, magic: u32) -> Result<Vec<SizedBlock>> {
         let offset = cursor.position();
         match u32::consensus_decode(&mut cursor) {
             Ok(value) => {
-                if magic != value {
+                if u32::from_be_bytes(magic.to_bytes()) != value {
                     cursor.set_position(offset + 1);
                     continue;
                 }
@@ -279,7 +280,7 @@ fn parse_blocks(blob: Vec<u8>, magic: u32) -> Result<Vec<SizedBlock>> {
         // by peeking the cursor (and skipping previous `magic` and `block_size`).
         match u32::consensus_decode(&mut cursor) {
             Ok(value) => {
-                if magic == value {
+                if u32::from_be_bytes(magic.to_bytes()) != value {
                     cursor.set_position(start);
                     continue;
                 }

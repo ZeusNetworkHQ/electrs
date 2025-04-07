@@ -4,6 +4,7 @@ extern crate log;
 
 extern crate electrs;
 
+use bitcoin::p2p::Magic;
 use error_chain::ChainedError;
 use std::process;
 use std::sync::{Arc, RwLock};
@@ -50,7 +51,7 @@ fn run_server(config: Arc<Config>) -> Result<()> {
         config.daemon_rpc_addr,
         config.cookie_getter(),
         config.network_type,
-        config.magic,
+        config.magic.map(|m| Magic::from_bytes(m.to_be_bytes())),
         signal.clone(),
         &metrics,
     )?);

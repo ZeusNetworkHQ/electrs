@@ -117,13 +117,9 @@ where
 
 pub(super) mod sigops {
     use crate::chain::{
-        hashes::hex::FromHex,
-        opcodes::{
-            all::{OP_CHECKMULTISIG, OP_CHECKMULTISIGVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY},
-            All,
-        },
+        opcodes::all::{OP_CHECKMULTISIG, OP_CHECKMULTISIGVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY},
         script::{self, Instruction},
-        Transaction, TxOut, Witness,
+        Opcode, Transaction, TxOut, Witness,
     };
     use std::collections::HashMap;
 
@@ -136,7 +132,7 @@ pub(super) mod sigops {
         let mut prevouts = Vec::with_capacity(input_count);
 
         #[cfg(not(feature = "liquid"))]
-        let is_coinbase_or_pegin = tx.is_coin_base();
+        let is_coinbase_or_pegin = tx.is_coinbase();
         #[cfg(feature = "liquid")]
         let is_coinbase_or_pegin = tx.is_coinbase() || tx.input.iter().any(|input| input.is_pegin);
 
@@ -154,10 +150,10 @@ pub(super) mod sigops {
         get_sigop_cost(tx, &prevouts, true, true)
     }
 
-    fn decode_pushnum(op: &All) -> Option<u8> {
+    fn decode_pushnum(op: &Opcode) -> Option<u8> {
         // 81 = OP_1, 96 = OP_16
         // 81 -> 1, so... 81 - 80 -> 1
-        let self_u8 = op.into_u8();
+        let self_u8 = op.to_u8();
         match self_u8 {
             81..=96 => Some(self_u8 - 80),
             _ => None,
@@ -216,7 +212,7 @@ pub(super) mod sigops {
 
     fn get_p2sh_sigop_count(tx: &Transaction, previous_outputs: &[&TxOut]) -> usize {
         #[cfg(not(feature = "liquid"))]
-        if tx.is_coin_base() {
+        if tx.is_coinbase() {
             return 0;
         }
         #[cfg(feature = "liquid")]
@@ -229,8 +225,7 @@ pub(super) mod sigops {
                 if let Some(Ok(script::Instruction::PushBytes(redeem))) =
                     input.script_sig.instructions().last()
                 {
-                    let script =
-                        script::Script::from_byte_iter(redeem.iter().map(|v| Ok(*v))).unwrap(); // I only return Ok, so it won't error
+                    let script = script::Script::from_bytes(redeem.as_bytes());
                     n += count_sigops(&script, true);
                 }
             }
@@ -256,7 +251,7 @@ pub(super) mod sigops {
         #[inline]
         fn last_pushdata(script: &script::Script) -> Option<&[u8]> {
             match script.instructions().last() {
-                Some(Ok(Instruction::PushBytes(bytes))) => Some(bytes),
+                Some(Ok(Instruction::PushBytes(bytes))) => Some(bytes.as_bytes()),
                 _ => None,
             }
         }
@@ -275,18 +270,15 @@ pub(super) mod sigops {
                 && is_push_only(script_sig)
                 && !script_sig.is_empty()
             {
-                script::Script::from_byte_iter(
-                    last_pushdata(script_sig).unwrap().iter().map(|v| Ok(*v)),
-                )
-                .unwrap()
+                script::Script::from_bytes(last_pushdata(script_sig).unwrap()).into()
             } else {
                 return 0;
             };
 
-            if script.is_v0_p2wsh() {
+            if script.is_p2wsh() {
                 let bytes = script.as_bytes();
                 n += sig_ops(witness, bytes[0], &bytes[2..]);
-            } else if script.is_v0_p2wpkh() {
+            } else if script.is_p2wpkh() {
                 n += 1;
             }
             n
@@ -307,7 +299,7 @@ pub(super) mod sigops {
     ) -> Result<usize, script::Error> {
         let mut n_sigop_cost = get_legacy_sigop_count(tx) * 4;
         #[cfg(not(feature = "liquid"))]
-        if tx.is_coin_base() {
+        if tx.is_coinbase() {
             return Ok(n_sigop_cost);
         }
         #[cfg(feature = "liquid")]
@@ -341,10 +333,9 @@ pub(super) mod sigops {
         match (witness_version, witness_program.len()) {
             (0, 20) => 1,
             (0, 32) => last_witness
-                .map(|sl| sl.iter().map(|v| Ok(*v)))
-                .map(script::Script::from_byte_iter)
+                .map(script::Script::from_bytes)
                 // I only return Ok 2 lines up, so there is no way to error
-                .map(|s| count_sigops(&s.unwrap(), true))
+                .map(|s| count_sigops(&s, true))
                 .unwrap_or_default(),
             _ => 0,
         }
