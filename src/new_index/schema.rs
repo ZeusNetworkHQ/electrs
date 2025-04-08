@@ -1,6 +1,6 @@
 use bitcoin::hashes::sha256d::Hash as Sha256dHash;
 #[cfg(not(feature = "liquid"))]
-use bitcoin::util::merkleblock::MerkleBlock;
+use bitcoin::MerkleBlock;
 use bitcoin::VarInt;
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -1228,7 +1228,7 @@ impl ChainQuery {
         let _timer = self.start_timer("lookup_txn");
         self.lookup_raw_txn(txid, blockhash).map(|rawtx| {
             let txn: Transaction = deserialize(&rawtx).expect("failed to parse Transaction");
-            assert_eq!(*txid, txn.txid());
+            assert_eq!(*txid, txn.compute_txid());
             txn
         })
     }
@@ -1385,7 +1385,7 @@ fn add_blocks(block_entries: &[BlockEntry], iconfig: &IndexerConfig) -> Vec<DBRo
         .map(|b| {
             let mut rows = vec![];
             let blockhash = full_hash(&b.entry.hash()[..]);
-            let txids: Vec<Txid> = b.block.txdata.iter().map(|tx| tx.txid()).collect();
+            let txids: Vec<Txid> = b.block.txdata.iter().map(|tx| tx.compute_txid()).collect();
             for tx in &b.block.txdata {
                 add_transaction(tx, blockhash, &mut rows, iconfig);
             }
@@ -1415,7 +1415,7 @@ fn add_transaction(
         rows.push(TxRow::new(tx).into_row());
     }
 
-    let txid = full_hash(&tx.txid()[..]);
+    let txid = full_hash(&tx.compute_txid()[..]);
     for (txo_index, txo) in tx.output.iter().enumerate() {
         if is_spendable(txo) {
             rows.push(TxOutRow::new(&txid, txo_index, txo).into_row());
@@ -1547,7 +1547,7 @@ fn index_transaction(
     //      H{funding-scripthash}{funding-height}{funding-block-pos}F{funding-txid:vout} → ""
     // persist "edges" for fast is-this-TXO-spent check
     //      S{funding-txid:vout}{spending-txid:vin} → ""
-    let txid = full_hash(&tx.txid()[..]);
+    let txid = full_hash(&tx.compute_txid()[..]);
     let script_callback = |script_hash| {
         if let Operation::DeleteBlocksWithHistory(tx) = op {
             tx.send(script_hash).expect("unbounded channel won't fail");
@@ -1562,14 +1562,14 @@ fn index_transaction(
                 TxHistoryInfo::Funding(FundingInfo {
                     txid,
                     vout: txo_index as u32,
-                    value: txo.value,
+                    value: txo.value.to_sat(),
                 }),
             );
             script_callback(history.key.hash);
             rows.push(history.into_row());
 
             if iconfig.address_search {
-                if let Some(row) = addr_search_row(&txo.script_pubkey, iconfig.network) {
+                if let Ok(row) = addr_search_row(&txo.script_pubkey, iconfig.network) {
                     rows.push(row);
                 }
             }
@@ -1592,7 +1592,7 @@ fn index_transaction(
                 vin: txi_index as u32,
                 prev_txid: full_hash(&txi.previous_output.txid[..]),
                 prev_vout: txi.previous_output.vout,
-                value: prev_txo.value,
+                value: prev_txo.value.to_sat(),
             }),
         );
         script_callback(history.key.hash);
@@ -1620,7 +1620,7 @@ fn index_transaction(
     );
 }
 
-fn addr_search_row(spk: &Script, network: Network) -> Option<DBRow> {
+fn addr_search_row(spk: &Script, network: Network) -> Result<DBRow> {
     spk.to_address_str(network).map(|address| DBRow {
         key: [b"a", address.as_bytes()].concat(),
         value: vec![],
@@ -1659,7 +1659,7 @@ struct TxRow {
 
 impl TxRow {
     fn new(txn: &Transaction) -> TxRow {
-        let txid = full_hash(&txn.txid()[..]);
+        let txid = full_hash(&txn.compute_txid()[..]);
         TxRow {
             key: TxRowKey { code: b'T', txid },
             value: serialize(txn),
@@ -1692,7 +1692,7 @@ struct TxConfRow {
 
 impl TxConfRow {
     fn new(txn: &Transaction, blockhash: FullHash) -> TxConfRow {
-        let txid = full_hash(&txn.txid()[..]);
+        let txid = full_hash(&txn.compute_txid()[..]);
         TxConfRow {
             key: TxConfKey {
                 code: b'C',
